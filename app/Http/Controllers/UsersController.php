@@ -2,34 +2,62 @@
 
 namespace App\Http\Controllers;
 
+use Cartalyst\Sentinel\Checkpoints\NotActivatedException;
+use Cartalyst\Sentinel\Checkpoints\ThrottlingException;
+
 use Illuminate\Http\Request;
 use App\User;
 use App\Http\Requests;
-use App\Http\Controllers\Controller;
-use Auth;
+use Redirect;
 use Socialite;
+use Sentinel;
+use Activation;
+use Reminder;
+use Validator;
+use Mail;
+use Storage;
+use CurlHttp;
 
 class UsersController extends Controller
 {
-    public function signUp($type, $data) {
+    public function signUp(Request $request) {
         
-        if($type == 'simple') {
-            // Проверка входных данных
-            $rules = User::$validation;
-            $validation = Validator::make(Input::all(), $rules);
-            if ($validation->fails()) {
-                // В случае провала, редиректим обратно с ошибками и самими введенными данными
-                return Redirect::to('users/register')->withErrors($validation)->withInput();
+        //if($type == 'simple') {
+            $this->validate($request, [
+            'email' => 'required|email',
+            'password' => 'required',
+            'password_confirm' => 'required|same:password',
+        ]);
+        $input = $request->all();
+        $credentials = [ 'email' => $request->email ];
+        if($user = Sentinel::findByCredentials($credentials)) {
+            return Redirect::to('register')
+                ->withErrors('Такой Email уже зарегистрирован.');
+        }
+ 
+        if ($sentuser = Sentinel::register($input)) {
+            $activation = Activation::create($sentuser);
+            $code = $activation->code;
+            $sent = Mail::send('mail.account_activate', compact('sentuser', 'code'), function($m) use ($sentuser) {
+                $m->from('noreplqy@mysite.ru', 'LaravelSite');
+                $m->to($sentuser->email)->subject('Активация аккаунта');
+            });
+            if ($sent === 0) {
+                return Redirect::to('register')
+                    ->withErrors('Ошибка отправки письма активации.');
             }
-
-            // Сама регистрация с уже проверенными данными
-            $user = new User();
-            $user->fill(Input::all());
-            $id = $user->register();
-
-            // Вывод информационного сообщения об успешности регистрации
-            return $this->getMessage("Регистрация почти завершена. Вам необходимо подтвердить e-mail, указанный при регистрации, перейдя по ссылке в письме.");
-        } else {
+ 
+            $role = Sentinel::findRoleBySlug('user');
+            $role->users()->attach($sentuser);
+ 
+            return Redirect::to('login')
+                ->withSuccess('Ваш аккаунт создан. Проверьте Email для активации.')
+                ->with('userId', $sentuser->getUserId());
+        }
+        return Redirect::to('register')
+            ->withInput()
+            ->withErrors('Failed to register.');
+        /*} else {
             switch($type) {
                 case 'facebook':
                     $fb_user = Socialize::with('facebook')->user();
@@ -41,54 +69,64 @@ class UsersController extends Controller
                     $token = $fb_user->token;
                     $tokenSecret = $fb_user->tokenSecret;
 
-                    /* All Providers
+                    // All Providers
                     $fb_user->getId();
                     $fb_user->getNickname();
                     $fb_user->getName();
                     $fb_user->getEmail();
-                    $fb_user->getAvatar();*/
+                    $fb_user->getAvatar();
                     
                     $authUser = $this->findOrCreateUser($user);
                 
             }
-        }
+        }*/
     }
     
-    public function sighIn($type, $data) {
+    public function signIn(Request $request) {
         
-        if($type === 'simple') {
-        // Формируем базовый набор данных для авторизации
-        // (isActive => 1 нужно для того, чтобы аторизоваться могли только
-        // активированные пользователи)
-        $creds = array(
-            'password' => Input::get('password'),
-            'isActive'  => 1,
-        );
+        //if($type === 'simple') {
+            try {
+                $this->validate($request, [
+                    'email' => 'required|email',
+                    'password' => 'required',
+                ]);
+                $remember = (bool) $request->remember;
+                if (Sentinel::authenticate($request->all(), $remember)) {
+                    return Redirect::intended('/');
+                }
+                $errors = 'Неправильный логин или пароль.';
+                return Redirect::back()
+                    ->withInput()
+                    ->withErrors($errors);
+                
+            } catch (NotActivatedException $e) {
+                $sentuser= $e->getUser();
+                $activation = Activation::create($sentuser);
+                $code = $activation->code;
+                $sent = Mail::send('mail.account_activate', compact('sentuser', 'code'), function($m) use ($sentuser) {
+                    $m->from('noreplay@mysite.ru', 'LaravelSite');
+                    $m->to($sentuser->email)->subject('Активация аккаунта');
+                });
 
-        // В зависимости от того, что пользователь указал в поле username,
-        // дополняем авторизационные данные
-        $username = Input::get('username');
-        if (strpos($username, '@')) {
-            $creds['email'] = $username;
-        } else {
-            $creds['username'] = $username;
-        }
+                if ($sent === 0) {
+                    return Redirect::to('login')
+                        ->withErrors('Ошибка отправки письма активации.');
+                }
+                $errors = 'Ваш аккаунт не ативирован! Поищите в своем почтовом ящике письмо со ссылкой для активации (Вам отправлено повторное письмо). ';
 
-        // Пытаемся авторизовать пользователя
-        if (Auth::attempt($creds, Input::has('remember'))) {
-            Log::info("User [{$username}] successfully logged in.");
-            return Redirect::intended();
-        } else {
-            Log::info("User [{$username}] failed to login.");
-        }
+                return view('auth.login')->withErrors($errors);
 
-        $alert = "Неверная комбинация имени (email) и пароля, либо учетная запись еще не активирована.";
 
-        // Возвращаем пользователя назад на форму входа с временной сессионной
-        // переменной alert (withAlert)
-        return Redirect::back()->withAlert($alert);
+            } catch (ThrottlingException $e) {
+                $delay = $e->getDelay();
+                $errors = "Ваш аккаунт блокирован на {$delay} секунд.";
+            }
+
+            return Redirect::back()
+                ->withInput()
+                ->withErrors($errors);
         
-        } else {
+        /*} else {
             switch($type) {
                 case 'facebook':
                     $fb_user = Socialize::with('facebook')->user();
@@ -104,7 +142,7 @@ class UsersController extends Controller
             
             }
                 
-        }
+        }*/
     }
     
     public function redirectToProvider() {
@@ -138,4 +176,21 @@ class UsersController extends Controller
 
     }
     
+    public function logout() {
+        Sentinel::logout();
+        return Redirect::intended('/');
+    }
+    
+    public function activate($id, $code) {
+        $sentuser = Sentinel::findById($id);
+ 
+        if ( ! Activation::complete($sentuser, $code))
+        {
+            return Redirect::to("login")
+                ->withErrors('Неверный или просроченный код активации.');
+        }
+ 
+        return Redirect::to('login')
+            ->withSuccess('Аккаунт активирован.');
+    }
 }

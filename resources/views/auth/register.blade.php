@@ -14,7 +14,7 @@
                             <label for="name" class="col-md-4 control-label">Name</label>
 
                             <div class="col-md-6">
-                                <input id="name" type="text" class="form-control" name="name" value="{{ old('name') }}">
+                                <input id="name" type="text" class="form-control" name="first_name" value="{{ old('name') }}">
 
                                 @if ($errors->has('name'))
                                     <span class="help-block">
@@ -56,7 +56,7 @@
                             <label for="password-confirm" class="col-md-4 control-label">Confirm Password</label>
 
                             <div class="col-md-6">
-                                <input id="password-confirm" type="password" class="form-control" name="password_confirmation">
+                                <input id="password-confirm" type="password" class="form-control" name="password_confirm">
 
                                 @if ($errors->has('password_confirmation'))
                                     <span class="help-block">
@@ -71,6 +71,8 @@
                                 <button type="submit" class="btn btn-primary">
                                     <i class="fa fa-btn fa-user"></i> Register
                                 </button>
+                                <a class="btn btn-primary" href="{{ action('UsersController@redirectToProvider') }}">
+                                    <span class="glyphicon glyphicon-thumbs-up"></span> FB Login</a>
                             </div>
                         </div>
                     </form>
