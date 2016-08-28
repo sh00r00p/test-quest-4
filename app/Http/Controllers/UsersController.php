@@ -19,18 +19,20 @@ use Storage;
 use CurlHttp;
 use Response;
 
-class UsersController extends Controller
-{
+class UsersController extends Controller {
+    
     public function signUp(Request $request) {
         
         //if($type == 'simple') {
-            $this->validate($request, [
+            
+        $this->validate($request, [
             'email' => 'required|email',
             'password' => 'required',
             'password_confirm' => 'required|same:password',
         ]);
         $input = $request->all();
         $credentials = [ 'email' => $request->email ];
+        
         if($user = Sentinel::findByCredentials($credentials)) {
             /*return Redirect::to('register')
                 ->withErrors('Такой Email уже зарегистрирован.');*/
@@ -89,7 +91,8 @@ class UsersController extends Controller
     public function signIn(Request $request) {
         
         //if($type === 'simple') {
-            try {
+            
+        try {
                 $this->validate($request, [
                     'email' => 'required|email',
                     'password' => 'required',
@@ -164,7 +167,7 @@ class UsersController extends Controller
 
         $authUser = $this->findOrCreateUser($user);
 
-        Auth::login($authUser, true);
+        Sentinel::authenticate($authUser, true);
 
         return redirect()->back();
     }
@@ -185,6 +188,7 @@ class UsersController extends Controller
     
     public function logout() {
         Sentinel::logout();
+        
         return Redirect::intended('/');
     }
     
