@@ -15,6 +15,8 @@ class RoleSeeder extends Seeder
             'email'    => 'admin@admin.com',
             'password' => 'adminadmin',
             'first_name' => 'Admin',
+            'facebook_id' => '',
+            'facebook_token' => '',
         ];
         $adminUser = Sentinel::registerAndActivate($admin);
         $role = [
